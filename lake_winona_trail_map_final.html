@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lake Winona Trail Conditions</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f7f6f3;
+    --surface: rgba(255,255,255,0.96);
+    --border: rgba(0,0,0,0.08);
+    --text: #1a1a1a;
+    --muted: #888;
+    --accent: #2c5f8a;
+    --gold: #b8862a;
+    --ex: #3d9970;
+    --go: #7fb069;
+    --fa: #e8a838;
+    --po: #d4542a;
+    --fl: #a31515;
+    --nd: #bbb;
+  }
+  html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); overflow: hidden; }
+
+  #map { position: fixed; inset: 0; z-index: 1; }
+
+  /* Greyscale map tiles */
+  .leaflet-tile { filter: grayscale(1) brightness(0.92) contrast(0.95); }
+
+  /* ── HEADER ── */
+  #header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 18px;
+    display: flex; align-items: center; gap: 18px;
+  }
+  #header h1 { font-size: 14px; font-weight: 500; letter-spacing: -0.01em; color: var(--text); }
+  #header .sub { font-size: 11px; color: var(--muted); font-weight: 300; }
+  #mode-tabs { display: flex; gap: 2px; margin-left: auto; }
+  .mtab {
+    font-size: 11px; font-weight: 400; padding: 4px 10px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--muted); cursor: pointer; transition: all 0.15s;
+    font-family: 'Inter', sans-serif;
+  }
+  .mtab:first-child { border-radius: 4px 0 0 4px; }
+  .mtab:last-child  { border-radius: 0 4px 4px 0; }
+  .mtab.active { background: var(--text); color: white; border-color: var(--text); }
+
+  /* ── DETAIL PANEL ── */
+  #panel {
+    position: fixed; top: 48px; right: 0; bottom: 0; width: 280px;
+    z-index: 50; background: var(--surface);
+    border-left: 1px solid var(--border);
+    transform: translateX(100%); transition: transform 0.2s ease;
+    overflow-y: auto; display: flex; flex-direction: column;
+  }
+  #panel.open { transform: translateX(0); }
+
+  #panel-head {
+    padding: 16px 16px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: flex-start;
+  }
+  #p-street { font-size: 15px; font-weight: 500; color: var(--text); line-height: 1.3; }
+  #p-meta   { font-size: 11px; color: var(--muted); margin-top: 3px; font-weight: 300; }
+  #p-close  { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 0; line-height: 1; margin-top: 2px; }
+  #p-close:hover { color: var(--text); }
+
+  #panel-body { padding: 14px 16px; flex: 1; }
+
+  .metric {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 8px 0; border-bottom: 1px solid var(--border);
+  }
+  .metric:last-of-type { border: none; }
+  .m-label { font-size: 11px; color: var(--muted); font-weight: 300; }
+  .m-val   { font-size: 14px; font-weight: 500; color: var(--text); }
+  .m-unit  { font-size: 10px; color: var(--muted); margin-left: 2px; font-weight: 300; }
+
+  .rating-chip {
+    display: inline-block; font-size: 10px; font-weight: 400;
+    padding: 2px 7px; border-radius: 10px; margin-top: 2px;
+  }
+
+  .z-bar {
+    height: 3px; background: var(--border); margin: 4px 0 10px;
+    border-radius: 2px; overflow: hidden;
+  }
+  .z-fill { height: 100%; border-radius: 2px; transition: width 0.4s; }
+
+  .tier-label {
+    font-size: 10px; color: var(--muted); font-weight: 300;
+    letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 10px;
+  }
+
+  .adj-list { font-size: 11px; color: var(--muted); font-weight: 300; line-height: 1.6; }
+
+  .fb-note {
+    margin-top: 12px; padding: 10px 12px;
+    background: #faf9f6; border: 1px solid var(--border);
+    border-radius: 4px; font-size: 11px; color: var(--muted);
+    font-weight: 300; line-height: 1.5;
+  }
+
+  /* ── BUDGET PLANNER ── */
+  #budget-btn {
+    position: fixed; top: 58px; left: 14px; z-index: 60;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); font-family: 'Inter', sans-serif;
+    font-size: 11px; font-weight: 400; padding: 5px 12px;
+    cursor: pointer; border-radius: 4px; transition: all 0.15s;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  #budget-btn:hover { background: var(--text); color: white; }
+
+  #budget-panel {
+    position: fixed; top: 48px; left: 0; bottom: 0; width: 270px;
+    z-index: 50; background: var(--surface);
+    border-right: 1px solid var(--border);
+    transform: translateX(-100%); transition: transform 0.2s ease;
+    overflow-y: auto;
+  }
+  #budget-panel.open { transform: translateX(0); }
+
+  #bp-head { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+  #bp-head h2 { font-size: 13px; font-weight: 500; }
+  #bp-head .sub { font-size: 11px; color: var(--muted); font-weight: 300; margin-top: 2px; }
+  #bp-body { padding: 14px 16px; }
+
+  label.field-label {
+    display: block; font-size: 10px; color: var(--muted);
+    font-weight: 400; letter-spacing: 0.05em; text-transform: uppercase;
+    margin-bottom: 4px; margin-top: 12px;
+  }
+  label.field-label:first-child { margin-top: 0; }
+
+  select.finput, input.finput {
+    width: 100%; padding: 7px 9px;
+    border: 1px solid var(--border); background: #faf9f6;
+    font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 300;
+    color: var(--text); outline: none;
+    border-radius: 3px; transition: border 0.15s;
+  }
+  select.finput:focus, input.finput:focus { border-color: var(--accent); }
+
+  .run-btn {
+    width: 100%; margin-top: 14px; padding: 8px;
+    background: var(--text); color: white;
+    border: none; font-family: 'Inter', sans-serif;
+    font-size: 12px; font-weight: 400; cursor: pointer;
+    border-radius: 3px; transition: opacity 0.15s;
+  }
+  .run-btn:hover { opacity: 0.85; }
+  .run-btn.secondary {
+    background: transparent; color: var(--muted);
+    border: 1px solid var(--border); margin-top: 6px;
+  }
+  .run-btn.export-btn {
+    background: transparent; color: var(--gold);
+    border: 1px solid var(--gold); margin-top: 6px;
+  }
+
+  #results { margin-top: 16px; display: none; }
+  .result-divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+  .res-row { display: flex; justify-content: space-between; padding: 5px 0; font-size: 12px; }
+  .res-key { color: var(--muted); font-weight: 300; }
+  .res-val { font-weight: 500; }
+  .res-head { font-size: 10px; color: var(--muted); font-weight: 400; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 8px; }
+
+  .seg-item {
+    padding: 8px 0; border-bottom: 1px solid var(--border);
+    cursor: pointer; transition: background 0.1s;
+  }
+  .seg-item:hover { background: #faf9f6; }
+  .si-top { display: flex; justify-content: space-between; align-items: center; }
+  .si-id  { font-size: 11px; font-weight: 500; color: var(--accent); }
+  .si-cost{ font-size: 11px; color: var(--gold); font-weight: 400; }
+  .si-name{ font-size: 12px; color: var(--text); font-weight: 300; margin-top: 1px; }
+  .si-meta{ font-size: 10px; color: var(--muted); font-weight: 300; margin-top: 1px; }
+
+  /* ── LEGEND ── */
+  #legend {
+    position: fixed; bottom: 18px; left: 14px; z-index: 60;
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 10px 12px; border-radius: 4px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    transition: left 0.2s ease;
+  }
+  #legend.shifted { left: 284px; }
+  .leg-title { font-size: 10px; color: var(--muted); font-weight: 400; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 7px; }
+  .li { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 11px; color: var(--text); font-weight: 300; }
+  .li:last-child { margin-bottom: 0; }
+  .ld { width: 22px; height: 4px; border-radius: 2px; flex-shrink: 0; }
+  .lr { font-size: 10px; color: var(--muted); margin-left: auto; }
+
+  /* ── STATS ── */
+  #stats {
+    position: fixed; bottom: 18px; right: 14px; z-index: 60;
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 10px 14px; border-radius: 4px;
+    display: flex; gap: 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  .st { text-align: center; }
+  .sv { font-size: 18px; font-weight: 500; display: block; }
+  .sl { font-size: 9px; color: var(--muted); font-weight: 300; letter-spacing: 0.04em; text-transform: uppercase; }
+
+  /* Tooltip */
+  .leaflet-tooltip {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text) !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 11px !important; font-weight: 300 !important;
+    padding: 5px 9px !important; border-radius: 3px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
+  }
+  .leaflet-tooltip::before { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div>
+    <h1>Lake Winona Trail Conditions</h1>
+    <div class="sub">Winona, Minnesota · 2026 Assessment · Anton Kadlec, WSU</div>
+  </div>
+  <div id="mode-tabs">
+    <button class="mtab active" onclick="setMode('iri',this)">IRI</button>
+    <button class="mtab" onclick="setMode('ci',this)">CI</button>
+    <button class="mtab" onclick="setMode('comp',this)">Z-Score</button>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<button id="budget-btn" onclick="toggleBudget()">Budget Planner</button>
+
+<!-- Budget Panel -->
+<div id="budget-panel">
+  <div id="bp-head">
+    <h2>Repair Budget Planner</h2>
+    <div class="sub">Select adjacent segments by mileage or budget</div>
+  </div>
+  <div id="bp-body">
+    <label class="field-label">Selection mode</label>
+    <select class="finput" id="bp-mode" onchange="toggleBpMode()">
+      <option value="miles">By mileage target</option>
+      <option value="budget">By dollar budget</option>
+    </select>
+    <div id="bp-miles-wrap">
+      <label class="field-label">Target miles</label>
+      <input class="finput" type="number" id="bp-miles" value="1.0" step="0.1" min="0.1" max="6.8">
+    </div>
+    <div id="bp-budget-wrap" style="display:none">
+      <label class="field-label">Budget ($)</label>
+      <input class="finput" type="number" id="bp-budget" value="50000" step="5000">
+    </div>
+    <label class="field-label">Minimum condition</label>
+    <select class="finput" id="bp-filter">
+      <option value="all">All rated segments</option>
+      <option value="fair">Fair or worse only</option>
+      <option value="poor">Poor or failed only</option>
+    </select>
+    <button class="run-btn" onclick="runPlan()">Calculate repair plan</button>
+    <button class="run-btn secondary" onclick="clearPlan()">Clear selection</button>
+    <div id="results">
+      <hr class="result-divider">
+      <div class="res-head">Summary</div>
+      <div class="res-row"><span class="res-key">Segments</span><span class="res-val" id="r-count">—</span></div>
+      <div class="res-row"><span class="res-key">Total length</span><span class="res-val" id="r-len">—</span></div>
+      <div class="res-row"><span class="res-key">Est. cost (low)</span><span class="res-val" id="r-lo">—</span></div>
+      <div class="res-row"><span class="res-key">Est. cost (high)</span><span class="res-val" id="r-hi">—</span></div>
+      <button class="run-btn export-btn" onclick="exportXlsx()">Export to Excel</button>
+      <hr class="result-divider">
+      <div class="res-head">Selected segments</div>
+      <div id="seg-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Detail Panel -->
+<div id="panel">
+  <div id="panel-head">
+    <div><div id="p-street">—</div><div id="p-meta">—</div></div>
+    <button id="p-close" onclick="closePanel()">×</button>
+  </div>
+  <div id="panel-body" id="pcontent"></div>
+</div>
+
+<!-- Legend -->
+<div id="legend">
+  <div class="leg-title" id="leg-title">IRI Rating</div>
+  <div id="leg-items"></div>
+</div>
+
+<!-- Stats -->
+<div id="stats">
+  <div class="st"><span class="sv">55</span><span class="sl">Segments</span></div>
+  <div class="st"><span class="sv">38</span><span class="sl">IRI data</span></div>
+  <div class="st"><span class="sv">24</span><span class="sl">CI validated</span></div>
+  <div class="st"><span class="sv" style="color:#d4542a">3</span><span class="sl">Tier 1</span></div>
+</div>
+
+<script>
+const TRAIL = [{"id": 100, "street": "Lake Winona Bike Path", "coords": [[44.0442617, -91.6621675], [44.0440631, -91.6624089]], "iri": 137.0368, "iri_r": "Fair", "ci": null, "ci_r": "No Data", "length": 96.2595, "direction": "NB / SB", "z_iri": 0.799, "z_ci": null, "comp": null, "length_ft": 96.2595, "adjacent": [104, 108, 114, 122]}, {"id": 101, "street": "Unnamed", "coords": [[44.0365763, -91.6220202], [44.036642, -91.621937], [44.0367037, -91.6219182], [44.0368097, -91.6219102], [44.0368637, -91.6219263], [44.0369446, -91.6219451], [44.0369388, -91.6220685], [44.0369377, -91.6221619]], "iri": 112.6201, "iri_r": "Good", "ci": 96.4, "ci_r": "Excellent", "length": 209.3927, "direction": "NB / SB", "z_iri": 0.248, "z_ci": -1.115, "comp": -0.867, "length_ft": 209.3927, "adjacent": [106, 111, 119, 148, 149, 150, 151, 152, 153, 154]}, {"id": 102, "street": "Lake Winona Bike Path", "coords": [[44.0389923, -91.6513769], [44.0399106, -91.6508833], [44.0419543, -91.6498022]], "iri": 157.306, "iri_r": "Fair", "ci": 65.0, "ci_r": "Good", "length": 1156.1647, "direction": "NB / SB", "z_iri": 1.257, "z_ci": 1.633, "comp": 2.89, "length_ft": 1156.1647, "adjacent": [108, 109, 110, 112, 113, 114, 115]}, {"id": 103, "street": "Lake Winona Bike Path", "coords": [[44.0369466, -91.6231574], [44.0369254, -91.623262]], "iri": 132.9882, "iri_r": "Fair", "ci": null, "ci_r": "No Data", "length": 28.5656, "direction": "WB / EB", "z_iri": 0.708, "z_ci": null, "comp": null, "length_ft": 28.5656, "adjacent": [118, 119]}, {"id": 104, "street": "Lake Winona Bike Path", "coords": [[44.0440631, -91.6624089], [44.0440131, -91.6624679]], "iri": 80.9112, "iri_r": "Good", "ci": null, "ci_r": "No Data", "length": 23.9295, "direction": "NB / SB", "z_iri": -0.468, "z_ci": null, "comp": null, "length_ft": 23.9295, "adjacent": [100, 108, 114, 122]}, {"id": 105, "street": "Lake Park Path", "coords": [[44.0353616, -91.6230931], [44.0353153, -91.6231467], [44.0352652, -91.6232245], [44.0351977, -91.6233237], [44.035159, -91.6234981], [44.0351282, -91.6237234], [44.0351109, -91.6238226], [44.0350549, -91.6240104], [44.0350222, -91.6242223], [44.034974, -91.624402], [44.0349662, -91.6244851], [44.034972, -91.6245736], [44.0350125, -91.6247614], [44.0351379, -91.6252522], [44.0351572, -91.6253515]], "iri": 119.3175, "iri_r": "Fair", "ci": 65.0, "ci_r": "Good", "length": 642.0341, "direction": "WB / EB", "z_iri": 0.399, "z_ci": 1.633, "comp": 2.032, "length_ft": 642.0341, "adjacent": [110, 111, 123, 125]}, {"id": 106, "street": "Lake Winona Bike Path", "coords": [[44.0367306, -91.6220255], [44.036906, -91.6221436]], "iri": 93.548, "iri_r": "Good", "ci": null, "ci_r": "No Data", "length": 82.0226, "direction": "NB / SB", "z_iri": -0.183, "z_ci": null, "comp": null, "length_ft": 82.0226, "adjacent": [101, 111, 119, 148, 149, 150, 151, 152, 153, 154]}, {"id": 107, "street": "Unnamed", "coords": [[44.0376003, -91.6274758], [44.0376831, -91.6274114], [44.0377123, -91.6273899], [44.0377486, -91.6273631], [44.0379493, -91.6272558], [44.0381709, -91.6271593], [44.038333, -91.627103], [44.0384217, -91.6270788], [44.0385411, -91.6270708], [44.0386128, -91.6270607], [44.0386881, -91.6270157]], "iri": 103.5354, "iri_r": "Good", "ci": 71.6, "ci_r": "Very Good", "length": 418.2612, "direction": "NB / SB", "z_iri": 0.043, "z_ci": 1.055, "comp": 1.098, "length_ft": 418.2612, "adjacent": []}, {"id": 108, "street": "Lake Park Path", "coords": [[44.0419356, -91.6497107], [44.0419543, -91.6498022], [44.042006, -91.6499393], [44.0421179, -91.6500949], [44.0422258, -91.6502048], [44.0423396, -91.6503094], [44.0424243, -91.6503953], [44.0424688, -91.6504167], [44.042515, -91.6505723], [44.0426192, -91.6509585], [44.0427116, -91.6513367], [44.0428486, -91.6517337], [44.0429161, -91.6518866], [44.0429893, -91.6519885], [44.0430125, -91.652069], [44.0430183, -91.6522996], [44.0430606, -91.6524552], [44.0431706, -91.6528897], [44.0432303, -91.653166], [44.0432573, -91.6534771], [44.0432824, -91.6536997], [44.0432978, -91.6539197], [44.0432766, -91.6541799], [44.0432573, -91.6544883], [44.0432593, -91.654727], [44.0432631, -91.6548182], [44.0432978, -91.6549497], [44.043346, -91.6552527], [44.043427, -91.6556283], [44.0434738, -91.6557684], [44.043531, -91.6559662], [44.0435869, -91.6561808], [44.0436186, -91.65634], [44.0436468, -91.6564812], [44.0437721, -91.6569533], [44.0439823, -91.6575219], [44.0440372, -91.6576371], [44.0440922, -91.6577526], [44.0441789, -91.6580637], [44.0442907, -91.6583802], [44.0443756, -91.6586082], [44.0444044, -91.6587906], [44.0444739, -91.6591205], [44.0445336, -91.6594558], [44.0445721, -91.6596784], [44.0446166, -91.6598554], [44.0446301, -91.6599332], [44.0446281, -91.6599761], [44.0446008, -91.6600573], [44.0445722, -91.6601424], [44.0445086, -91.6602631], [44.0444623, -91.6604509], [44.0444161, -91.660762], [44.0443679, -91.6611348], [44.0443235, -91.661623], [44.0443139, -91.6619985], [44.044308, -91.6621058], [44.0442617, -91.6621675]], "iri": 86.3814, "iri_r": "Good", "ci": 77.6, "ci_r": "Very Good", "length": 3551.5748, "direction": "WB / EB", "z_iri": -0.345, "z_ci": 0.53, "comp": 0.186, "length_ft": 3551.5748, "adjacent": [100, 102, 104, 109, 114, 115, 122]}, {"id": 109, "street": "Lake Park Path", "coords": [[44.0419181, -91.6496377], [44.0419694, -91.6493438], [44.0420041, -91.6492339], [44.0420022, -91.6490944], [44.0420003, -91.6489576], [44.042008, -91.648853], [44.0420098, -91.6487055], [44.0419752, -91.6485606], [44.0419636, -91.6484694], [44.0419713, -91.6481771], [44.0419694, -91.6480483], [44.0419521, -91.6479196], [44.0419039, -91.6477157], [44.0418884, -91.6476165], [44.0418788, -91.6474931], [44.0418807, -91.6473188], [44.0418846, -91.6471552], [44.0418769, -91.6470398], [44.0418499, -91.6469513], [44.0418017, -91.6468574], [44.041765, -91.6468118], [44.0417379, -91.6467448], [44.0415452, -91.6462378], [44.0414681, -91.6460554], [44.0413833, -91.6459026], [44.0412714, -91.645755], [44.0412445, -91.6457068], [44.0412212, -91.6456182], [44.0411866, -91.6454841], [44.0411211, -91.6452588], [44.0410188, -91.6449745], [44.0409379, -91.6447492], [44.0407644, -91.6443066], [44.040745, -91.6442771], [44.0406852, -91.6442396], [44.0406371, -91.6441994], [44.0405965, -91.6441108], [44.0405464, -91.6440089], [44.0404906, -91.6439016], [44.040425, -91.6438238], [44.0403903, -91.6437327], [44.0403903, -91.6436871], [44.0403922, -91.6435583], [44.0403652, -91.6434698], [44.0403209, -91.6433223], [44.0402496, -91.6430326], [44.0401898, -91.6427], [44.0401454, -91.6424774], [44.0401146, -91.6424345], [44.040078, -91.6423191], [44.0400722, -91.6422521], [44.0400799, -91.6421636], [44.0400876, -91.6420616], [44.0400818, -91.6419195], [44.0400587, -91.6416942], [44.0400665, -91.6413864], [44.0400317, -91.6411819], [44.0400163, -91.6409646], [44.039995, -91.6406723], [44.0400066, -91.6405837], [44.0400124, -91.6403826], [44.0400143, -91.6400688], [44.0400124, -91.6398703], [44.0400163, -91.6396879], [44.0400008, -91.639484], [44.0399854, -91.6392507], [44.0399815, -91.6391193], [44.0399777, -91.6389476], [44.0400259, -91.6384058]], "iri": 49.2388, "iri_r": "Excellent", "ci": 78.6, "ci_r": "Very Good", "length": 3161.8898, "direction": "WB / EB", "z_iri": -1.183, "z_ci": 0.443, "comp": -0.74, "length_ft": 3161.8898, "adjacent": [102, 108, 115, 116, 117]}, {"id": 110, "street": "Lake Park Path", "coords": [[44.0388999, -91.6506018], [44.038896, -91.650186], [44.0388787, -91.6500734], [44.0387321, -91.6499044], [44.0386048, -91.6497569], [44.0385353, -91.6496362], [44.0385006, -91.6495638], [44.0384409, -91.6494109], [44.0383561, -91.6492097], [44.0383059, -91.6490622], [44.0382712, -91.6488852], [44.0381362, -91.6484694], [44.0380515, -91.6482307], [44.0379859, -91.6479813], [44.0378587, -91.6477023], [44.0378336, -91.6476138], [44.0378354, -91.6475119], [44.0378355, -91.6474153], [44.0377565, -91.6471739], [44.0376542, -91.6468682], [44.037581, -91.6466563], [44.0375444, -91.6465195], [44.0374962, -91.6463639], [44.0373824, -91.6460233], [44.0373167, -91.6458114], [44.037255, -91.6455753], [44.0371204, -91.6450613], [44.0369954, -91.6446466], [44.0369061, -91.6445078], [44.0368463, -91.644371], [44.0368385, -91.644253], [44.0367865, -91.6440116], [44.0366921, -91.6438292], [44.0365975, -91.6435556], [44.0365166, -91.6432928], [44.0364432, -91.6430406], [44.0364143, -91.642928], [44.0364029, -91.6427697], [44.0363989, -91.6426705], [44.0363334, -91.6425042], [44.0362466, -91.6423379], [44.0361714, -91.6421743], [44.0361462, -91.6420516], [44.0361355, -91.6419725], [44.0361438, -91.6418558], [44.0361049, -91.6417351], [44.0360509, -91.6415547], [44.035886, -91.6410344], [44.0358031, -91.6407554], [44.0357356, -91.6404121], [44.0356258, -91.6400366], [44.0355678, -91.6398569], [44.0354831, -91.6394599], [44.0354386, -91.6392078], [44.0353711, -91.6389422], [44.0353384, -91.6387947], [44.0352728, -91.6386821], [44.0351842, -91.6385828], [44.0350761, -91.6384916], [44.0349779, -91.6384085], [44.0348968, -91.63832], [44.0348622, -91.6382529], [44.0348293, -91.6381188], [44.0345826, -91.637003], [44.0345054, -91.6366248], [44.0344572, -91.6362788], [44.0344012, -91.6358121], [44.0343627, -91.6356377], [44.034301, -91.6354098], [44.0342297, -91.6351979], [44.0341371, -91.6348036], [44.0340928, -91.6346024], [44.0340137, -91.6343261], [44.033977, -91.634243], [44.0338574, -91.6340713], [44.0337939, -91.6338541], [44.0337186, -91.6336395], [44.0336763, -91.6334786], [44.0336107, -91.6331943], [44.0335682, -91.6329229], [44.0334333, -91.632639], [44.0333966, -91.6325264], [44.0333543, -91.6324109], [44.0333001, -91.6322803], [44.0332268, -91.6321052], [44.0331556, -91.6319208], [44.0330649, -91.6317432], [44.0329371, -91.6315111], [44.0328461, -91.631297], [44.0327923, -91.6311983], [44.0327622, -91.6311316], [44.0327082, -91.6310458], [44.0326234, -91.6309224], [44.0325963, -91.6308554], [44.0325713, -91.6307427], [44.0325713, -91.6306596], [44.0325289, -91.6305335], [44.032469, -91.6303431], [44.0323843, -91.6301392], [44.032334, -91.6299434], [44.0322395, -91.6294526], [44.0321953, -91.6292165], [44.0321701, -91.6290207], [44.0321664, -91.628841], [44.0321701, -91.6285889], [44.0321934, -91.6284011], [44.0321837, -91.6281919], [44.0321894, -91.6279183], [44.0321895, -91.6277172], [44.0322473, -91.6275643], [44.0322993, -91.6274168], [44.0323167, -91.6272988], [44.0323341, -91.6272424], [44.0323649, -91.6272183], [44.0324575, -91.6271325], [44.0326292, -91.6269501], [44.0327121, -91.626875], [44.0327603, -91.6268508], [44.0328258, -91.6268481], [44.0328914, -91.6268696], [44.0329956, -91.626934], [44.0330862, -91.6269876], [44.0331363, -91.6270386], [44.0331653, -91.6270761], [44.0332018, -91.6271861], [44.0332211, -91.6272478], [44.0332732, -91.6273175], [44.0333406, -91.6273578], [44.0334081, -91.627398], [44.0334679, -91.627457], [44.0335278, -91.6275348], [44.0335566, -91.6276287], [44.0335779, -91.627693], [44.0336184, -91.6277789], [44.0336763, -91.6278432], [44.0337494, -91.6278862], [44.0338169, -91.627913], [44.0339153, -91.6279452], [44.0339713, -91.6280203], [44.0340137, -91.6280927], [44.0340484, -91.6281544], [44.0341101, -91.6282375], [44.0341717, -91.6282831], [44.0342297, -91.6282912], [44.0343106, -91.6282402], [44.034382, -91.6282], [44.0344456, -91.6281785], [44.0345188, -91.6281839], [44.0346327, -91.6282107], [44.0347079, -91.6282214], [44.0348177, -91.6281973], [44.0349065, -91.6281732], [44.0349893, -91.6281302], [44.0350356, -91.6280525], [44.0350896, -91.627921], [44.0351436, -91.6277842], [44.0351919, -91.6277038], [44.0352459, -91.6276287], [44.0352651, -91.6275402], [44.0352864, -91.6273953], [44.0352825, -91.6272666], [44.035294, -91.6270949], [44.0353094, -91.6269232], [44.0353133, -91.6267918], [44.0353403, -91.6266899], [44.0353539, -91.6265665], [44.0353519, -91.6264565], [44.0353057, -91.6262742], [44.0352459, -91.626124], [44.0351802, -91.6259469], [44.0351514, -91.6258048], [44.0351418, -91.6257136], [44.0351437, -91.6255982], [44.0351513, -91.6254802], [44.0351572, -91.6253515]], "iri": 150.3646, "iri_r": "Fair", "ci": 76.5, "ci_r": "Very Good", "length": 8722.2113, "direction": "WB / EB", "z_iri": 1.1, "z_ci": 0.627, "comp": 1.727, "length_ft": 8722.2113, "adjacent": [102, 105, 112, 113, 114]}, {"id": 111, "street": "Lake Park Path", "coords": [[44.0353616, -91.6230931], [44.0354503, -91.6230743], [44.0356046, -91.6230233], [44.0357317, -91.6229375], [44.0358455, -91.6228141], [44.036181, -91.6224493], [44.0364877, -91.6221087], [44.0365763, -91.6220202], [44.0366322, -91.6220121], [44.0366747, -91.6220202], [44.0367306, -91.6220255]], "iri": 123.3349, "iri_r": "Fair", "ci": 65.6, "ci_r": "Good", "length": 589.6621, "direction": "NB / SB", "z_iri": 0.49, "z_ci": 1.58, "comp": 2.07, "length_ft": 589.6621, "adjacent": [101, 105, 106, 119, 123, 125, 148, 149, 150, 151, 152, 154]}, {"id": 112, "street": "Lake Winona Bike Path", "coords": [[44.0389923, -91.6513769], [44.0389648, -91.6512907], [44.0389458, -91.6512216], [44.0389191, -91.6511248], [44.0389037, -91.6510417], [44.0389134, -91.6508646], [44.0389037, -91.6507171]], "iri": 188.6914, "iri_r": "Fair", "ci": 72.8, "ci_r": "Very Good", "length": 179.6575, "direction": "WB / EB", "z_iri": 1.965, "z_ci": 0.95, "comp": 2.916, "length_ft": 179.6575, "adjacent": [102, 110, 113, 114]}, {"id": 113, "street": "Lake Winona Bike Path", "coords": [[44.0389037, -91.6507171], [44.0388999, -91.6506018]], "iri": 230.3974, "iri_r": "Poor", "ci": null, "ci_r": "No Data", "length": 30.3445, "direction": "WB / EB", "z_iri": 2.907, "z_ci": null, "comp": null, "length_ft": 30.3445, "adjacent": [102, 110, 112, 114]}, {"id": 114, "street": "Lake Park Path", "coords": [[44.0440131, -91.6624679], [44.0439391, -91.6625391], [44.0438049, -91.6626395], [44.0436988, -91.66272], [44.0435408, -91.6628246], [44.0433904, -91.6629292], [44.043346, -91.6629534], [44.0432207, -91.6629855], [44.0430337, -91.6629855], [44.0428467, -91.6629802], [44.0427676, -91.6630043], [44.0427116, -91.6630289], [44.0426539, -91.6629024], [44.0423718, -91.6622714], [44.0415721, -91.6604455], [44.0410651, -91.6593431], [44.04072, -91.6585599], [44.0399217, -91.6567548], [44.0398929, -91.6566609], [44.0398408, -91.6564866], [44.0398021, -91.6563685], [44.0395823, -91.6559099], [44.0393606, -91.6555317], [44.0391273, -91.6550382], [44.0390483, -91.6548316], [44.0390098, -91.6547056], [44.0389865, -91.6545554], [44.0389653, -91.6543059], [44.0389519, -91.6541584], [44.0389288, -91.6540457], [44.0388843, -91.6538821], [44.0388381, -91.6537212], [44.0387455, -91.6534852], [44.0386608, -91.6532357], [44.0385122, -91.6528683], [44.0383155, -91.6523318], [44.0382847, -91.6522782], [44.0382096, -91.6521602], [44.038196, -91.6521172], [44.038196, -91.6520609], [44.0382096, -91.6519992], [44.0382462, -91.6519348], [44.0383812, -91.6517766], [44.0384679, -91.6517042], [44.0388439, -91.6514762], [44.0389923, -91.6513769]], "iri": 68.0597, "iri_r": "Good", "ci": 81.3, "ci_r": "Very Good", "length": 4198.2612, "direction": "WB / EB", "z_iri": -0.758, "z_ci": 0.207, "comp": -0.552, "length_ft": 4198.2612, "adjacent": [100, 102, 104, 108, 110, 112, 113, 122]}, {"id": 115, "street": "Lake Winona Bike Path", "coords": [[44.0419356, -91.6497107], [44.0419181, -91.6496377]], "iri": 105.7828, "iri_r": "Good", "ci": null, "ci_r": "No Data", "length": 20.2231, "direction": "WB / EB", "z_iri": 0.093, "z_ci": null, "comp": null, "length_ft": 20.2231, "adjacent": [102, 108, 109]}, {"id": 116, "street": "Lake Winona Bike Path", "coords": [[44.0400425, -91.6382873], [44.0400399, -91.6381643], [44.0400337, -91.6380856], [44.040027, -91.6379457], [44.0400219, -91.6378182], [44.0399974, -91.6376806], [44.0399391, -91.6375528], [44.0398832, -91.6374402]], "iri": 125.228, "iri_r": "Fair", "ci": 85.6, "ci_r": "Excellent", "length": 236.5453, "direction": "WB / EB", "z_iri": 0.533, "z_ci": -0.17, "comp": 0.363, "length_ft": 236.5453, "adjacent": [109, 117, 118]}, {"id": 117, "street": "Lake Winona Bike Path", "coords": [[44.0400259, -91.6384058], [44.0400425, -91.6382873]], "iri": 58.4246, "iri_r": "Good", "ci": null, "ci_r": "No Data", "length": 31.7356, "direction": "WB / EB", "z_iri": -0.976, "z_ci": null, "comp": null, "length_ft": 31.7356, "adjacent": [109, 116]}, {"id": 118, "street": "Lake Park Path", "coords": [[44.0369254, -91.623262], [44.0369022, -91.6233801], [44.0368965, -91.6234981], [44.03691, -91.6236268], [44.0369196, -91.623777], [44.0368637, -91.623997], [44.0368328, -91.6241364], [44.0368328, -91.6242223], [44.0368713, -91.6243537], [44.0369003, -91.6244985], [44.0369138, -91.6246353], [44.0369447, -91.6248231], [44.0369871, -91.6249947], [44.0370025, -91.625094], [44.037018, -91.6252227], [44.037018, -91.6252791], [44.0370545, -91.6253515], [44.0371027, -91.6254266], [44.0371413, -91.625499], [44.0371549, -91.6255339], [44.0371568, -91.6261052], [44.0371549, -91.6261508], [44.0372281, -91.6263063], [44.0372801, -91.6264297], [44.0373207, -91.6266577], [44.0373631, -91.6268991], [44.0374132, -91.627052], [44.0374788, -91.6271861], [44.0375405, -91.6272558], [44.0375867, -91.6273309], [44.0376003, -91.6274758], [44.0376368, -91.6275643], [44.0377043, -91.6277011], [44.037741, -91.6278888], [44.0377931, -91.6280069], [44.0378432, -91.6281061], [44.0379302, -91.6282054], [44.0379835, -91.6282997], [44.0379596, -91.6287476], [44.0379563, -91.6288415], [44.0377989, -91.6292434], [44.0377661, -91.629407], [44.03777, -91.6294767], [44.0377796, -91.629584], [44.0377738, -91.6296296], [44.0377236, -91.6297154], [44.0376832, -91.6297771], [44.0376716, -91.6298281], [44.0376923, -91.6300901], [44.0377153, -91.630242], [44.0377423, -91.6303698], [44.0377498, -91.6304691], [44.0377295, -91.630555], [44.0376928, -91.6306515], [44.0376696, -91.6307347], [44.0376523, -91.6308339], [44.0376813, -91.6310565], [44.0376832, -91.6311611], [44.0376543, -91.6313194], [44.0376292, -91.6315206], [44.0376292, -91.6316305], [44.0376446, -91.6316922], [44.0377005, -91.6318424], [44.0377295, -91.6319712], [44.0377641, -91.6321294], [44.03777, -91.6322045], [44.0377622, -91.6323064], [44.0377584, -91.6323789], [44.0377911, -91.6325371], [44.0378238, -91.6326256], [44.0383137, -91.6333203], [44.0383446, -91.6333659], [44.0384564, -91.6338219], [44.0384834, -91.6338621], [44.0385759, -91.6339801], [44.0387456, -91.6341813], [44.0388844, -91.6343905], [44.0389905, -91.6345997], [44.039137, -91.6348197], [44.0391869, -91.6349121], [44.0391949, -91.634927], [44.0392719, -91.6350772], [44.0393337, -91.6351469], [44.0394301, -91.6352515], [44.0394995, -91.6353803], [44.0395399, -91.6354983], [44.0395535, -91.6355787], [44.0396538, -91.6356726], [44.0396923, -91.6357531], [44.0397636, -91.6359489], [44.0397983, -91.6361179], [44.0398138, -91.6362097], [44.0398138, -91.6363163], [44.0398031, -91.6363638], [44.0397944, -91.6364022], [44.0396749, -91.6367053], [44.0396673, -91.636783], [44.0397005, -91.6368999], [44.0397286, -91.6370253], [44.0397678, -91.637185], [44.0398042, -91.6372927], [44.0398832, -91.6374402]], "iri": 112.9002, "iri_r": "Good", "ci": 75.6, "ci_r": "Very Good", "length": 4211.7454, "direction": "WB / EB", "z_iri": 0.254, "z_ci": 0.705, "comp": 0.96, "length_ft": 4211.7454, "adjacent": [103, 116, 119]}, {"id": 119, "street": "Lake Winona Bike Path", "coords": [[44.0369377, -91.6221619], [44.0368772, -91.6224118], [44.0368251, -91.6225378], [44.0368155, -91.6226264], [44.0368367, -91.6227578], [44.0369002, -91.622967], [44.0369466, -91.6231574]], "iri": 127.1526, "iri_r": "Fair", "ci": 89.9, "ci_r": "Excellent", "length": 278.9531, "direction": "WB / EB", "z_iri": 0.576, "z_ci": -0.546, "comp": 0.03, "length_ft": 278.9531, "adjacent": [101, 103, 106, 111, 118, 148, 149, 150, 151, 152, 153, 154]}, {"id": 120, "street": "Unnamed", "coords": [[44.0409379, -91.6447492], [44.041053, -91.6446596]], "iri": 127.2845, "iri_r": "Fair", "ci": null, "ci_r": "No Data", "length": 48.1096, "direction": "NB / SB", "z_iri": 0.579, "z_ci": null, "comp": null, "length_ft": 48.1096, "adjacent": []}, {"id": 121, "street": "Unnamed", "coords": [[44.0328748, -91.6225112], [44.0328351, -91.6225233], [44.0327766, -91.6225349], [44.0324203, -91.6225245], [44.0323002, -91.6225923], [44.0318857, -91.6226915], [44.0314994, -91.6226853], [44.031203, -91.6226341], [44.0310529, -91.6226549], [44.0310554, -91.6228563], [44.0310895, -91.6230139], [44.0311917, -91.6231627], [44.031336, -91.6232741], [44.0314541, -91.6233854], [44.0315016, -91.6234251], [44.0315471, -91.6234784], [44.0315886, -91.6235495], [44.0318177, -91.6240985]], "iri": 61.1541, "iri_r": "Good", "ci": 79.3, "ci_r": "Very Good", "length": 1170.8924, "direction": "WB / EB", "z_iri": -0.914, "z_ci": 0.382, "comp": -0.532, "length_ft": 1170.8924, "adjacent": [145, 146]}, {"id": 122, "street": "Lake Park Path", "coords": [[44.0471557, -91.6671965], [44.0468289, -91.6666447], [44.0465919, -91.6662649], [44.0463809, -91.6659225], [44.0460153, -91.6653416], [44.0455383, -91.664664], [44.0448736, -91.6636579], [44.0445222, -91.6631473], [44.0443955, -91.6629528], [44.0440131, -91.6624679]], "iri": 124.3581, "iri_r": "Fair", "ci": 80.7, "ci_r": "Very Good", "length": 1691.5781, "direction": "WB / EB", "z_iri": 0.513, "z_ci": 0.259, "comp": 0.772, "length_ft": 1691.5781, "adjacent": [100, 104, 108, 114]}, {"id": 123, "street": "Unnamed", "coords": [[44.0350931, -91.6232314], [44.0353616, -91.6230931]], "iri": 55.5177, "iri_r": "Good", "ci": 78.3, "ci_r": "Very Good", "length": 104.393, "direction": "NB / SB", "z_iri": -1.041, "z_ci": 0.469, "comp": -0.572, "length_ft": 104.393, "adjacent": [105, 111, 125]}, {"id": 124, "street": "Unnamed", "coords": [[44.0295156, -91.6226378], [44.0294577, -91.6225721], [44.0293681, -91.6225412], [44.029289, -91.6225171], [44.0292388, -91.6226029]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 119.4856, "direction": "NB / SB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 119.4856, "adjacent": [126, 127, 128, 129, 130, 131, 134, 135, 136, 140, 141, 142, 143]}, {"id": 125, "street": "Unnamed", "coords": [[44.0353616, -91.6230931], [44.0354087, -91.622798], [44.0354087, -91.6226264], [44.0353547, -91.6224601], [44.0353354, -91.6223582], [44.0353438, -91.6222663], [44.0353547, -91.6221489]], "iri": 96.635, "iri_r": "Good", "ci": 92.3, "ci_r": "Excellent", "length": 255.7073, "direction": "WB / EB", "z_iri": -0.113, "z_ci": -0.756, "comp": -0.869, "length_ft": 255.7073, "adjacent": [105, 111, 123, 145, 147, 148]}, {"id": 126, "street": "Unnamed", "coords": [[44.0295734, -91.6228805], [44.0296544, -91.6230238]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 47.8671, "direction": "WB / EB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 47.8671, "adjacent": [124, 127, 128, 130, 134, 135, 136, 140, 141, 142, 143]}, {"id": 127, "street": "Unnamed", "coords": [[44.0292986, -91.6223501], [44.0292986, -91.6222375], [44.0292755, -91.6221168]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 62.4436, "direction": "WB / EB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 62.4436, "adjacent": [124, 126, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 143]}, {"id": 128, "street": "Unnamed", "coords": [[44.0292388, -91.6226029], [44.0292087, -91.6226612], [44.0291675, -91.622727]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 41.7598, "direction": "WB / EB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 41.7598, "adjacent": [124, 126, 127, 129, 130, 131, 134, 135, 136, 140, 141, 142, 143]}, {"id": 129, "street": "Unnamed", "coords": [[44.0292562, -91.6219612], [44.029235, -91.6218539], [44.0292832, -91.6217868], [44.0293488, -91.6217949]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 78.1535, "direction": "WB / EB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 78.1535, "adjacent": [124, 127, 128, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140]}, {"id": 130, "street": "Unnamed", "coords": [[44.0291675, -91.622727], [44.0291386, -91.6227632], [44.0291019, -91.6227632]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 27.572, "direction": "NB / SB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 27.572, "adjacent": [124, 126, 127, 128, 129, 134, 135, 140, 141, 142]}, {"id": 131, "street": "Unnamed", "coords": [[44.029235, -91.6218539], [44.0291868, -91.6218888], [44.0291424, -91.6219022], [44.0290209, -91.6218378], [44.0289129, -91.6217761], [44.0286854, -91.621693], [44.0282983, -91.6215574], [44.0282167, -91.6215428], [44.0274183, -91.6213094]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 684.9869, "direction": "NB / SB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 684.9869, "adjacent": [124, 127, 128, 129, 132, 133, 135, 136, 137, 138, 139]}, {"id": 132, "street": "Unnamed", "coords": [[44.0292832, -91.6217868], [44.0293102, -91.6216554], [44.0292986, -91.6215106], [44.0293141, -91.6214677]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 86.8501, "direction": "WB / EB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 86.8501, "adjacent": [127, 129, 131, 133, 136, 137, 138, 139]}, {"id": 133, "street": "Unnamed", "coords": [[44.0293141, -91.6214677], [44.0293435, -91.6212928]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 47.2215, "direction": "WB / EB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 47.2215, "adjacent": [127, 129, 131, 132, 136, 137, 138, 139]}, {"id": 134, "street": "Unnamed", "coords": [[44.0297981, -91.6225238], [44.0298174, -91.6224252], [44.0298685, -91.6223903], [44.0298945, -91.6224373]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 63.1985, "direction": "NB / SB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 63.1985, "adjacent": [124, 126, 127, 128, 129, 130, 135, 136, 137, 139, 140, 141, 142, 143]}, {"id": 135, "street": "Unnamed", "coords": [[44.0298685, -91.6223903], [44.0298666, -91.6223447]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 12.0103, "direction": "WB / EB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 12.0103, "adjacent": [124, 126, 127, 128, 129, 130, 131, 134, 136, 137, 139, 140, 141, 142, 143]}, {"id": 136, "street": "Unnamed", "coords": [[44.0298531, -91.6222046], [44.0298386, -91.6221121], [44.0298473, -91.6220209]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 49.0794, "direction": "WB / EB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 49.0794, "adjacent": [124, 126, 127, 128, 129, 131, 132, 133, 134, 135, 137, 138, 139, 140, 141, 142, 143]}, {"id": 137, "street": "Unnamed", "coords": [[44.0298637, -91.6219109], [44.029773, -91.6218894], [44.0297229, -91.6218653], [44.0296814, -91.6218143], [44.0296284, -91.6216903]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 110.9744, "direction": "NB / SB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 110.9744, "adjacent": [127, 129, 131, 132, 133, 134, 135, 136, 138, 139, 141, 143]}, {"id": 138, "street": "Unnamed", "coords": [[44.0295792, -91.6214308], [44.0295523, -91.6213331]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 27.497, "direction": "WB / EB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 27.497, "adjacent": [127, 129, 131, 132, 133, 136, 137, 139]}, {"id": 139, "street": "Unnamed", "coords": [[44.0295792, -91.6214308], [44.0295946, -91.621475], [44.0296043, -91.6215984], [44.0296284, -91.6216903]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 71.2579, "direction": "WB / EB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 71.2579, "adjacent": [127, 129, 131, 132, 133, 134, 135, 136, 137, 138]}, {"id": 140, "street": "Unnamed", "coords": [[44.0295734, -91.6228805], [44.0295541, -91.6228363], [44.0295474, -91.6227384], [44.0295156, -91.6226378]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 68.3232, "direction": "WB / EB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 68.3232, "adjacent": [124, 126, 127, 128, 129, 130, 134, 135, 136, 141, 142, 143]}, {"id": 141, "street": "Unnamed", "coords": [[44.0299553, -91.6225426], [44.0299157, -91.6226532], [44.0298887, -91.6227846], [44.0298984, -91.622908]], "iri": 29.7846, "iri_r": "Excellent", "ci": 99.5, "ci_r": "Excellent", "length": 101.0305, "direction": "WB / EB", "z_iri": -1.622, "z_ci": -1.386, "comp": -3.008, "length_ft": 101.0305, "adjacent": [124, 126, 127, 128, 130, 134, 135, 136, 137, 140, 142, 143]}, {"id": 142, "street": "Unnamed", "coords": [[44.0298984, -91.622908], [44.0298794, -91.6231749]], "iri": null, "iri_r": "Not Surveyed", "ci": null, "ci_r": "No Data", "length": 70.521, "direction": "WB / EB", "z_iri": null, "z_ci": null, "comp": null, "length_ft": 70.521, "adjacent": [124, 126, 128, 130, 134, 135, 136, 140, 141, 143]}, {"id": 143, "street": "Unnamed", "coords": [[44.0299553, -91.6225426], [44.0300604, -91.6225164], [44.0303921, -91.622613], [44.0307237, -91.6226157], [44.0308934, -91.6226237]], "iri": 86.6343, "iri_r": "Good", "ci": 93.4, "ci_r": "Excellent", "length": 345.1837, "direction": "NB / SB", "z_iri": -0.339, "z_ci": -0.852, "comp": -1.191, "length_ft": 345.1837, "adjacent": [124, 126, 127, 128, 134, 135, 136, 137, 140, 141, 142, 144]}, {"id": 144, "street": "Unnamed", "coords": [[44.0308934, -91.6226237], [44.0309551, -91.6226313], [44.0310529, -91.6226549]], "iri": 116.6364, "iri_r": "Fair", "ci": null, "ci_r": "No Data", "length": 58.7549, "direction": "NB / SB", "z_iri": 0.339, "z_ci": null, "comp": null, "length_ft": 58.7549, "adjacent": [143]}, {"id": 145, "street": "Unnamed", "coords": [[44.0351521, -91.6222481], [44.0351251, -91.6222481], [44.0351078, -91.6221944], [44.0350151, -91.6221475], [44.0348969, -91.6221547], [44.0348016, -91.622183], [44.034566, -91.6222114], [44.0338101, -91.6223445], [44.0330359, -91.6224815]], "iri": 55.2282, "iri_r": "Good", "ci": 94.9, "ci_r": "Excellent", "length": 790.5512, "direction": "NB / SB", "z_iri": -1.048, "z_ci": -0.983, "comp": -2.031, "length_ft": 790.5512, "adjacent": [121, 125, 146, 147, 148]}, {"id": 146, "street": "Unnamed", "coords": [[44.0330359, -91.6224815], [44.0329924, -91.6224868], [44.0329069, -91.6225014], [44.0328748, -91.6225112]], "iri": 112.8167, "iri_r": "Good", "ci": null, "ci_r": "No Data", "length": 54.1867, "direction": "NB / SB", "z_iri": 0.252, "z_ci": null, "comp": null, "length_ft": 54.1867, "adjacent": [121, 145]}, {"id": 147, "street": "Unnamed", "coords": [[44.0351521, -91.6222481], [44.0351889, -91.6222517], [44.0352331, -91.6222561], [44.0352799, -91.6222604], [44.0353438, -91.6222663]], "iri": 79.0132, "iri_r": "Good", "ci": null, "ci_r": "No Data", "length": 70.0295, "direction": "NB / SB", "z_iri": -0.511, "z_ci": null, "comp": null, "length_ft": 70.0295, "adjacent": [125, 145, 148]}, {"id": 148, "street": "Unnamed", "coords": [[44.0353547, -91.6221489], [44.0354066, -91.6220469], [44.0355185, -91.6219986], [44.0359504, -91.6220013], [44.036338, -91.6219289], [44.036642, -91.621937]], "iri": 58.3278, "iri_r": "Good", "ci": 95.1, "ci_r": "Excellent", "length": 480.5906, "direction": "NB / SB", "z_iri": -0.978, "z_ci": -1.001, "comp": -1.979, "length_ft": 480.5906, "adjacent": [101, 106, 111, 119, 125, 145, 147, 149, 150, 151, 152, 154]}, {"id": 149, "street": "Unnamed", "coords": [[44.0369446, -91.6219451], [44.0370842, -91.6219852], [44.0371768, -91.6220845]], "iri": 11.3954, "iri_r": "Excellent", "ci": 100.0, "ci_r": "Excellent", "length": 94.6263, "direction": "NB / SB", "z_iri": -2.038, "z_ci": -1.43, "comp": -3.467, "length_ft": 94.6263, "adjacent": [101, 106, 111, 119, 148, 150, 151, 152, 153, 154]}, {"id": 150, "street": "Unnamed", "coords": [[44.0371768, -91.6220845], [44.0372485, -91.6220269], [44.0372905, -91.6219933], [44.0373428, -91.6220036], [44.0374321, -91.6220212]], "iri": 155.3973, "iri_r": "Fair", "ci": null, "ci_r": "No Data", "length": 100.0007, "direction": "NB / SB", "z_iri": 1.214, "z_ci": null, "comp": null, "length_ft": 100.0007, "adjacent": [101, 106, 111, 119, 148, 149, 151, 152, 153, 154]}, {"id": 151, "street": "Unnamed", "coords": [[44.0374321, -91.6220212], [44.0374429, -91.6219021], [44.0375412, -91.6218028], [44.0377126, -91.6217264], [44.0378497, -91.6216902], [44.0380792, -91.6215641], [44.0382004, -91.6215261]], "iri": 91.4034, "iri_r": "Good", "ci": 95.9, "ci_r": "Excellent", "length": 327.6306, "direction": "NB / SB", "z_iri": -0.231, "z_ci": -1.071, "comp": -1.302, "length_ft": 327.6306, "adjacent": [101, 106, 111, 119, 148, 149, 150, 152, 153, 154]}, {"id": 152, "street": "Unnamed", "coords": [[44.03811, -91.6212101], [44.0379866, -91.6212449], [44.0378189, -91.6213335], [44.0376299, -91.6214059], [44.0374834, -91.6214274], [44.0374294, -91.6214354], [44.0372423, -91.621422], [44.0370804, -91.6214568], [44.0369357, -91.6215588]], "iri": 30.072, "iri_r": "Excellent", "ci": 97.0, "ci_r": "Excellent", "length": 443.4022, "direction": "NB / SB", "z_iri": -1.616, "z_ci": -1.167, "comp": -2.783, "length_ft": 443.4022, "adjacent": [101, 106, 111, 119, 148, 149, 150, 151, 153, 154]}, {"id": 153, "street": "Unnamed", "coords": [[44.0375412, -91.6218028], [44.0374858, -91.6216827], [44.0374583, -91.6216231], [44.0374676, -91.6215501], [44.0374834, -91.6214274]], "iri": 88.353, "iri_r": "Good", "ci": null, "ci_r": "No Data", "length": 108.3386, "direction": "WB / EB", "z_iri": -0.3, "z_ci": null, "comp": null, "length_ft": 108.3386, "adjacent": [101, 106, 119, 149, 150, 151, 152, 154]}, {"id": 154, "street": "Unnamed", "coords": [[44.0369446, -91.6219451], [44.0369718, -91.6218099], [44.0369878, -91.6217304], [44.0369692, -91.621669], [44.0369357, -91.6215588]], "iri": 119.193, "iri_r": "Fair", "ci": null, "ci_r": "No Data", "length": 107.5515, "direction": "WB / EB", "z_iri": 0.396, "z_ci": null, "comp": null, "length_ft": 107.5515, "adjacent": [101, 106, 111, 119, 148, 149, 150, 151, 152, 153]}];
+const ADJ   = {"100": [104, 108, 114, 122], "101": [106, 111, 119, 148, 149, 150, 151, 152, 153, 154], "102": [108, 109, 110, 112, 113, 114, 115], "103": [118, 119], "104": [100, 108, 114, 122], "105": [110, 111, 123, 125], "106": [101, 111, 119, 148, 149, 150, 151, 152, 153, 154], "107": [], "108": [100, 102, 104, 109, 114, 115, 122], "109": [102, 108, 115, 116, 117], "110": [102, 105, 112, 113, 114], "111": [101, 105, 106, 119, 123, 125, 148, 149, 150, 151, 152, 154], "112": [102, 110, 113, 114], "113": [102, 110, 112, 114], "114": [100, 102, 104, 108, 110, 112, 113, 122], "115": [102, 108, 109], "116": [109, 117, 118], "117": [109, 116], "118": [103, 116, 119], "119": [101, 103, 106, 111, 118, 148, 149, 150, 151, 152, 153, 154], "120": [], "121": [145, 146], "122": [100, 104, 108, 114], "123": [105, 111, 125], "124": [126, 127, 128, 129, 130, 131, 134, 135, 136, 140, 141, 142, 143], "125": [105, 111, 123, 145, 147, 148], "126": [124, 127, 128, 130, 134, 135, 136, 140, 141, 142, 143], "127": [124, 126, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 143], "128": [124, 126, 127, 129, 130, 131, 134, 135, 136, 140, 141, 142, 143], "129": [124, 127, 128, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140], "130": [124, 126, 127, 128, 129, 134, 135, 140, 141, 142], "131": [124, 127, 128, 129, 132, 133, 135, 136, 137, 138, 139], "132": [127, 129, 131, 133, 136, 137, 138, 139], "133": [127, 129, 131, 132, 136, 137, 138, 139], "134": [124, 126, 127, 128, 129, 130, 135, 136, 137, 139, 140, 141, 142, 143], "135": [124, 126, 127, 128, 129, 130, 131, 134, 136, 137, 139, 140, 141, 142, 143], "136": [124, 126, 127, 128, 129, 131, 132, 133, 134, 135, 137, 138, 139, 140, 141, 142, 143], "137": [127, 129, 131, 132, 133, 134, 135, 136, 138, 139, 141, 143], "138": [127, 129, 131, 132, 133, 136, 137, 139], "139": [127, 129, 131, 132, 133, 134, 135, 136, 137, 138], "140": [124, 126, 127, 128, 129, 130, 134, 135, 136, 141, 142, 143], "141": [124, 126, 127, 128, 130, 134, 135, 136, 137, 140, 142, 143], "142": [124, 126, 128, 130, 134, 135, 136, 140, 141, 143], "143": [124, 126, 127, 128, 134, 135, 136, 137, 140, 141, 142, 144], "144": [143], "145": [121, 125, 146, 147, 148], "146": [121, 145], "147": [125, 145, 148], "148": [101, 106, 111, 119, 125, 145, 147, 149, 150, 151, 152, 154], "149": [101, 106, 111, 119, 148, 150, 151, 152, 153, 154], "150": [101, 106, 111, 119, 148, 149, 151, 152, 153, 154], "151": [101, 106, 111, 119, 148, 149, 150, 152, 153, 154], "152": [101, 106, 111, 119, 148, 149, 150, 151, 153, 154], "153": [101, 106, 119, 149, 150, 151, 152, 154], "154": [101, 106, 111, 119, 148, 149, 150, 151, 152, 153]};
+
+const IRI_C = {Excellent:'#3d9970',Good:'#7fb069',Fair:'#e8a838',Poor:'#d4542a','Not Surveyed':'#ccc'};
+const CI_C  = {Excellent:'#3d9970','Very Good':'#7fb069',Good:'#b5c748',Fair:'#e8a838',Poor:'#d4542a','Very Poor':'#a31515',Failed:'#6b0e0e','No Data':'#ccc'};
+function compC(z) {
+  if (z===null) return '#ccc';
+  if (z>2.5)  return '#d4542a';
+  if (z>1.0)  return '#e8a838';
+  if (z>0)    return '#b5c748';
+  if (z>-1)   return '#7fb069';
+  return '#3d9970';
+}
+function costRange(r) {
+  if (r==='Poor'||r==='Failed') return [35,55];
+  if (r==='Fair')  return [14,22];
+  if (r==='Good')  return [6,10];
+  return [2,4];
+}
+function priority(seg) {
+  if (seg.iri_r==='Not Surveyed') return -999;
+  if (seg.comp!==null) return seg.comp;
+  if (seg.z_iri!==null) return seg.z_iri - 0.5;
+  return -999;
+}
+function tier(seg) {
+  if (seg.comp!==null) {
+    if (seg.comp>2.5) return 'Tier 1 — Immediate action';
+    if (seg.comp>1.0) return 'Tier 2 — Plan within 1–2 years';
+    if (seg.comp>0)   return 'Tier 3 — Preventive treatment';
+    return 'Tier 4 — Routine monitoring';
+  }
+  if (seg.iri_r==='Poor'||seg.iri_r==='Failed') return 'Tier 1 — Immediate action (IRI only)';
+  if (seg.iri_r==='Fair')  return 'Tier 2 — Plan within 1–2 years (IRI only)';
+  if (seg.iri_r==='Not Surveyed') return 'Not surveyed';
+  return 'Tier 3 — Preventive treatment (IRI only)';
+}
+
+let mode = 'iri';
+let selectedIds = new Set();
+let activeId = null;
+let budgetOpen = false;
+let lastPlan = [];
+
+const map = L.map('map',{zoomControl:false}).setView([44.046,-91.640],14);
+L.control.zoom({position:'topright'}).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap',maxZoom:19}).addTo(map);
+
+let layers = [];
+
+function getColor(seg) {
+  if (selectedIds.has(seg.id)) return '#2c5f8a';
+  if (seg.id === activeId) return '#1a3d5c';
+  if (mode==='iri')  return IRI_C[seg.iri_r]||'#ccc';
+  if (mode==='ci')   return CI_C[seg.ci_r]||'#ccc';
+  return compC(seg.comp);
+}
+function getWeight(seg) {
+  if (seg.id === activeId) return 8;
+  if (selectedIds.has(seg.id)) return 7;
+  if (seg.iri_r==='Poor'||seg.iri_r==='Failed') return 6;
+  return 4;
+}
+function getOpacity(seg) {
+  if (seg.id === activeId || selectedIds.has(seg.id)) return 1;
+  return 0.85;
+}
+
+function buildLayers() {
+  layers.forEach(l=>map.removeLayer(l));
+  layers=[];
+  TRAIL.forEach(seg=>{
+    const col = getColor(seg);
+    const wt  = getWeight(seg);
+    const op  = getOpacity(seg);
+    const pl  = L.polyline(seg.coords,{color:col,weight:wt,opacity:op,lineCap:'round',lineJoin:'round'});
+    const tip = `Seg ${seg.id} — ${seg.street}<br>${seg.iri!==null?seg.iri.toFixed(1)+' in/mi ('+seg.iri_r+')':'Not surveyed'}${seg.ci!==null?'<br>CI '+seg.ci.toFixed(1)+' ('+seg.ci_r+')':''}`;
+    pl.bindTooltip(tip,{sticky:true,offset:[8,0]});
+    pl.on('click',()=>openSegment(seg));
+    pl.addTo(map);
+    layers.push(pl);
+  });
+}
+
+function openSegment(seg) {
+  activeId = seg.id;
+  buildLayers();
+
+  document.getElementById('p-street').textContent = seg.street;
+  document.getElementById('p-meta').textContent   = `Segment ${seg.id}  ·  ${seg.direction||''}  ·  ${seg.length?seg.length.toFixed(0)+' ft':'—'}`;
+
+  const compPct = seg.comp!==null ? Math.min(100,Math.max(0,((seg.comp+3.5)/7)*100)) : 0;
+  const compCol = compC(seg.comp);
+  const iriCol  = IRI_C[seg.iri_r]||'#ccc';
+  const ciCol   = CI_C[seg.ci_r]||'#ccc';
+  const [lo,hi] = costRange(seg.iri_r);
+  const cLo = ((seg.length||0)*lo).toLocaleString('en-US',{maximumFractionDigits:0});
+  const cHi = ((seg.length||0)*hi).toLocaleString('en-US',{maximumFractionDigits:0});
+  const adjList = (ADJ[String(seg.id)]||[]).join(', ') || 'None';
+
+  document.getElementById('panel-body').innerHTML = `
+    ${seg.comp!==null?`
+    <div style="padding:8px 0 4px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <span class="m-label">Composite Z-score</span>
+        <span class="m-val" style="color:${compCol}">${seg.comp>0?'+':''}${seg.comp.toFixed(3)}</span>
+      </div>
+      <div class="z-bar"><div class="z-fill" style="width:${compPct}%;background:${compCol}"></div></div>
+      <div class="tier-label">${tier(seg)}</div>
+    </div>
+    <hr style="border:none;border-top:1px solid var(--border);margin:0 0 8px">`:
+    `<div class="tier-label" style="padding-top:8px">${tier(seg)}</div>`}
+
+    <div class="metric">
+      <span class="m-label">IRI score</span>
+      <span class="m-val">${seg.iri!==null?seg.iri.toFixed(1):'—'}<span class="m-unit">${seg.iri?'in/mi':''}</span></span>
+    </div>
+    <div style="margin:-4px 0 8px">
+      <span class="rating-chip" style="background:${iriCol}18;color:${iriCol};border:1px solid ${iriCol}40">${seg.iri_r}</span>
+      ${seg.z_iri!==null?`<span style="font-size:10px;color:var(--muted);margin-left:6px;font-weight:300">Z-IRI ${seg.z_iri>0?'+':''}${seg.z_iri.toFixed(3)}</span>`:''}
+    </div>
+
+    <div class="metric">
+      <span class="m-label">CI score</span>
+      <span class="m-val">${seg.ci!==null?seg.ci.toFixed(1):'—'}</span>
+    </div>
+    <div style="margin:-4px 0 8px">
+      <span class="rating-chip" style="background:${ciCol}18;color:${ciCol};border:1px solid ${ciCol}40">${seg.ci_r}</span>
+      ${seg.z_ci!==null?`<span style="font-size:10px;color:var(--muted);margin-left:6px;font-weight:300">Z-CI ${seg.z_ci>0?'+':''}${seg.z_ci.toFixed(3)}</span>`:''}
+    </div>
+
+    <div class="metric"><span class="m-label">Est. repair cost</span><span class="m-val" style="color:var(--gold)">$${cLo}–$${cHi}</span></div>
+    <div class="metric"><span class="m-label">Length</span><span class="m-val">${seg.length?seg.length.toFixed(0):''}<span class="m-unit"> ft</span></span></div>
+    <div class="metric"><span class="m-label">Direction</span><span class="m-val">${seg.direction||'—'}</span></div>
+    <div class="metric" style="border:none"><span class="m-label">Adjacent segments</span><span class="m-val" style="font-size:12px">${adjList}</span></div>
+
+    <div class="fb-note">Community feedback not yet collected. QR code surveys planned for five trailhead kiosks.</div>
+  `;
+  document.getElementById('panel').classList.add('open');
+}
+
+function closePanel() {
+  document.getElementById('panel').classList.remove('open');
+  activeId = null;
+  buildLayers();
+}
+
+// Budget planner
+function toggleBudget() {
+  budgetOpen = !budgetOpen;
+  document.getElementById('budget-panel').classList.toggle('open', budgetOpen);
+  document.getElementById('legend').classList.toggle('shifted', budgetOpen);
+  document.getElementById('budget-btn').textContent = budgetOpen ? 'Close planner' : 'Budget planner';
+}
+function toggleBpMode() {
+  const m = document.getElementById('bp-mode').value;
+  document.getElementById('bp-miles-wrap').style.display  = m==='miles'?'block':'none';
+  document.getElementById('bp-budget-wrap').style.display = m==='budget'?'block':'none';
+}
+
+function runPlan() {
+  const bMode  = document.getElementById('bp-mode').value;
+  const tMiles = parseFloat(document.getElementById('bp-miles').value)||1;
+  const tBudget= parseFloat(document.getElementById('bp-budget').value)||50000;
+  const filter = document.getElementById('bp-filter').value;
+  const tFt    = tMiles * 5280;
+  const overflow = bMode==='miles' ? tFt*1.15 : Infinity;
+
+  const eligible = TRAIL.filter(s=>{
+    if (s.iri_r==='Not Surveyed') return false;
+    if (filter==='fair'  && !['Fair','Poor','Failed'].includes(s.iri_r)) return false;
+    if (filter==='poor'  && !['Poor','Failed'].includes(s.iri_r)) return false;
+    return true;
+  });
+  const sorted = [...eligible].sort((a,b)=>priority(b)-priority(a));
+
+  const sel=[]; const selIds=new Set();
+  let totFt=0, totCostMid=0;
+
+  for (const st of sorted) {
+    if (selIds.has(st.id)) continue;
+    if (bMode==='miles'&&totFt>=tFt) break;
+    if (bMode==='budget'&&totCostMid>=tBudget) break;
+    const [lo,hi] = costRange(st.iri_r);
+    const len=st.length||0, costMid=len*(lo+hi)/2;
+    if (bMode==='miles'&&totFt+len>overflow) continue;
+    if (bMode==='budget'&&totCostMid+costMid>tBudget*1.1) continue;
+    sel.push(st); selIds.add(st.id); totFt+=len; totCostMid+=costMid;
+    const adjSegs = TRAIL.filter(s=>( ADJ[String(st.id)]||[]).includes(s.id)&&!selIds.has(s.id)&&eligible.includes(s));
+    adjSegs.sort((a,b)=>priority(b)-priority(a));
+    for (const adj of adjSegs) {
+      if (bMode==='miles'&&totFt>=tFt) break;
+      if (bMode==='budget'&&totCostMid>=tBudget) break;
+      const [alo,ahi]=costRange(adj.iri_r);
+      const alen=adj.length||0, acostMid=alen*(alo+ahi)/2;
+      if (bMode==='miles'&&totFt+alen>overflow) continue;
+      if (bMode==='budget'&&totCostMid+acostMid>tBudget*1.1) continue;
+      sel.push(adj); selIds.add(adj.id); totFt+=alen; totCostMid+=acostMid;
+    }
+  }
+
+  lastPlan = sel;
+  selectedIds = new Set(sel.map(s=>s.id));
+  buildLayers();
+
+  let cLo=0, cHi=0;
+  sel.forEach(s=>{const[lo,hi]=costRange(s.iri_r);cLo+=(s.length||0)*lo;cHi+=(s.length||0)*hi;});
+
+  document.getElementById('r-count').textContent = sel.length+' segments';
+  document.getElementById('r-len').textContent   = totFt.toFixed(0)+' ft ('+( totFt/5280).toFixed(2)+' mi)';
+  document.getElementById('r-lo').textContent    = '$'+cLo.toLocaleString('en-US',{maximumFractionDigits:0});
+  document.getElementById('r-hi').textContent    = '$'+cHi.toLocaleString('en-US',{maximumFractionDigits:0});
+  document.getElementById('results').style.display='block';
+
+  document.getElementById('seg-list').innerHTML = sel.map((s,i)=>{
+    const[lo,hi]=costRange(s.iri_r);
+    const slo=((s.length||0)*lo).toLocaleString('en-US',{maximumFractionDigits:0});
+    const shi=((s.length||0)*hi).toLocaleString('en-US',{maximumFractionDigits:0});
+    return `<div class="seg-item" onclick="focusSeg(${s.id})">
+      <div class="si-top"><span class="si-id">Seg ${s.id} · #${i+1}</span><span class="si-cost">$${slo}–$${shi}</span></div>
+      <div class="si-name">${s.street}</div>
+      <div class="si-meta">${s.iri_r} · ${(s.length||0).toFixed(0)} ft${s.comp!==null?' · Z '+s.comp.toFixed(2):''}</div>
+    </div>`;
+  }).join('');
+}
+
+function focusSeg(id) {
+  const seg = TRAIL.find(s=>s.id===id);
+  if (seg&&seg.coords.length) { map.setView(seg.coords[0],16); openSegment(seg); }
+}
+
+function clearPlan() {
+  selectedIds=new Set(); lastPlan=[];
+  document.getElementById('results').style.display='none';
+  document.getElementById('seg-list').innerHTML='';
+  buildLayers();
+}
+
+function exportXlsx() {
+  if (!lastPlan.length) return;
+  const rows = [['Rank','Segment ID','Street','IRI','IRI Rating','CI','CI Rating','Z-IRI','Z-CI','Composite Z','Length (ft)','Length (mi)','Cost Low','Cost High','Tier']];
+  let tLo=0,tHi=0,tFt=0;
+  lastPlan.forEach((s,i)=>{
+    const[lo,hi]=costRange(s.iri_r);
+    const slo=Math.round((s.length||0)*lo), shi=Math.round((s.length||0)*hi);
+    tLo+=slo; tHi+=shi; tFt+=(s.length||0);
+    rows.push([i+1,s.id,s.street,s.iri?+s.iri.toFixed(1):'N/A',s.iri_r,s.ci!==null?+s.ci.toFixed(1):'No Data',s.ci_r,s.z_iri!==null?+s.z_iri.toFixed(3):'N/A',s.z_ci!==null?+s.z_ci.toFixed(3):'N/A',s.comp!==null?+s.comp.toFixed(3):'N/A',+(s.length||0).toFixed(0),+((s.length||0)/5280).toFixed(3),slo,shi,tier(s)]);
+  });
+  rows.push([]);
+  rows.push(['TOTAL','—','—','—','—','—','—','—','—','—',+tFt.toFixed(0),+(tFt/5280).toFixed(3),tLo,tHi,'—']);
+  rows.push([]);
+  rows.push(['Cost notes:','Poor/Failed $35–55/ft · Fair $14–22/ft · Good $6–10/ft · Excellent $2–4/ft']);
+  rows.push(['Data:','IRI via TotalPave 2026 · CI validated via GoodPointe ICON April 2026 · Spearman r=−0.608 p=0.0016']);
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols']=[{wch:6},{wch:12},{wch:26},{wch:8},{wch:12},{wch:8},{wch:12},{wch:8},{wch:8},{wch:13},{wch:12},{wch:12},{wch:12},{wch:12},{wch:28}];
+  XLSX.utils.book_append_sheet(wb,ws,'Repair Plan');
+  XLSX.writeFile(wb,'LakeWinona_RepairPlan_'+new Date().toISOString().slice(0,10)+'.xlsx');
+}
+
+// Legends
+const LEGENDS = {
+  iri:[
+    {l:'Excellent',r:'0–50',c:'#3d9970'},{l:'Good',r:'50–115',c:'#7fb069'},
+    {l:'Fair',r:'115–190',c:'#e8a838'},{l:'Poor',r:'190–340',c:'#d4542a'},
+    {l:'Not surveyed',r:'—',c:'#ccc'}
+  ],
+  ci:[
+    {l:'Excellent',r:'85–100',c:'#3d9970'},{l:'Very Good',r:'70–84',c:'#7fb069'},
+    {l:'Good',r:'55–69',c:'#b5c748'},{l:'Fair',r:'40–54',c:'#e8a838'},
+    {l:'Poor / Very Poor',r:'0–39',c:'#d4542a'},{l:'No data',r:'—',c:'#ccc'}
+  ],
+  comp:[
+    {l:'Critical  >2.5',r:'Tier 1',c:'#d4542a'},{l:'High  1–2.5',r:'Tier 2',c:'#e8a838'},
+    {l:'Moderate  0–1',r:'Tier 3',c:'#b5c748'},{l:'Good  −1–0',r:'Tier 4',c:'#7fb069'},
+    {l:'Excellent  <−1',r:'Best',c:'#3d9970'},{l:'No data',r:'—',c:'#ccc'}
+  ]
+};
+const TITLES = {iri:'IRI Rating',ci:'CI Rating',comp:'Composite Z-Score'};
+
+function setMode(m, btn) {
+  mode=m;
+  document.querySelectorAll('.mtab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('leg-title').textContent = TITLES[m];
+  document.getElementById('leg-items').innerHTML = LEGENDS[m].map(i=>
+    `<div class="li"><div class="ld" style="background:${i.c}"></div>${i.l}<span class="lr">${i.r}</span></div>`
+  ).join('');
+  buildLayers();
+}
+
+setMode('iri', document.querySelector('.mtab'));
+</script>
+</body>
+</html>
